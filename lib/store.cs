@@ -9,8 +9,8 @@ namespace ClemSSH.Lib;
 public class Store
 {
     public static Store Instance { get; } = new Store();
-    private string filePath;
-    private string keyFilePath;
+    private string filePath = null!;
+    private string keyFilePath = null!;
     private Dictionary<string, int> linesCache = [];
     private int keyStart;
     private const int AESKeySize = 32; // AES-256
@@ -20,9 +20,24 @@ public class Store
 
     public Store()
     {
+        Initialize(null);
+    }
+
+    // test-only: point the store at an isolated directory rather than the real config location
+    public Store(string directory)
+    {
+        if (string.IsNullOrWhiteSpace(directory))
+        {
+            throw new ArgumentException("Directory must not be empty.", nameof(directory));
+        }
+        Initialize(directory);
+    }
+
+    private void Initialize(string? directory)
+    {
         if (OperatingSystem.IsWindows())
         {
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            string appData = directory ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             filePath = Path.Combine(appData, "clemssh", "store.json");
             keyFilePath = ""; // not used on Windows
         }
@@ -349,7 +364,7 @@ public class Store
                 keyStart = SafePosition(reader.BaseStream.Position);
                 return;
             }
-            string keysJson = Encoding.UTF8.GetString(reader.ReadBytes(paddedSize)).TrimEnd(); // strip padding
+            string keysJson = Encoding.UTF8.GetString(reader.ReadBytes(paddedSize)).TrimEnd('\0', ' '); // strip padding
             var keys = JsonSerializer.Deserialize<Dictionary<string, int>>(keysJson);
             if (keys != null)
             {
@@ -405,6 +420,11 @@ public class Store
         {
             byte[] padded = new byte[paddedSize];
             Array.Copy(keysBytes, padded, keysSize);
+            // pad the remainder with spaces
+            for (int i = keysSize; i < padded.Length; i++)
+            {
+                padded[i] = (byte)' ';
+            }
             using (var writer = new BinaryWriter(lockStream, Encoding.UTF8, leaveOpen: true))
             {
                 lockStream.Seek(0, SeekOrigin.Begin);

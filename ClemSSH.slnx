@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/test/">
+    <Project Path="test/ClemSSH.Tests.csproj" />
+  </Folder>
+  <Project Path="ClemSSH.csproj" />
+</Solution>
