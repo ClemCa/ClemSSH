@@ -136,6 +136,34 @@ public class Store
         }
     }
 
+    public void DeleteEncrypted(string key)
+    {
+        bool alreadyLocked = lockStream != null;
+        if (!alreadyLocked)
+        {
+            LockFile();
+        }
+        try
+        {
+            // refresh cache in case it was written by someone else (another instance)
+            PopulateLineCache();
+            if (linesCache.TryGetValue(key, out int lineNumber))
+            {
+                linesCache.Remove(key);
+                SetLine(key, lineNumber, ""); // clear the line
+                SaveLineCache();
+                lockStream!.Flush(flushToDisk: true);
+            }
+        }
+        finally
+        {
+            if (!alreadyLocked)
+            {
+                UnlockFile();
+            }
+        }
+    }
+
     // OS-specific keyring access for non-Windows platforms
     private const string KeyService = "clemssh";
     private const string KeyAccount = "store-master-key";
