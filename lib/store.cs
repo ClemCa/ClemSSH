@@ -16,6 +16,8 @@ public class Store
     private const int AESKeySize = 32; // AES-256
     private FileStream? lockStream;
 
+    public ICollection<string> Keys => linesCache.Keys;
+
     public Store()
     {
         if (OperatingSystem.IsWindows())
