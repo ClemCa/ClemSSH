@@ -49,17 +49,6 @@ if (args.Length != 1)
         Console.WriteLine($"Deleted {matchesD[0]}.");
         return;
     }
-    if (args.Length == 2 && (args[0] == "--list" || args[0] == "-l"))
-    {
-        var keys = Store.Instance.Keys;
-        if (keys.Count == 0)
-        {
-            Console.WriteLine("No saved hosts.");
-            return;
-        }
-        NavigateMatches("All saved hosts:", [..keys]);
-        return;
-    }
     if (args.Length == 2 && (args[0] == "--search" || args[0] == "-s"))
     {
         string fusedSearch = args[1];
@@ -86,6 +75,19 @@ if (args.Length != 1)
     PrintHelp();
     return;
 }
+
+if (args[0] == "--list" || args[0] == "-l")
+{
+    var keys = Store.Instance.Keys;
+    if (keys.Count == 0)
+    {
+        Console.WriteLine("No saved hosts.");
+        return;
+    }
+    NavigateMatches("All saved hosts:", [..keys]);
+    return;
+}
+
 string fused = args.Length > 1 ? string.Join(" ", args[1..]) : "";
 Regex regex = CommandRegex();
 
