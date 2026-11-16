@@ -1,5 +1,5 @@
+using System.Text;
 using Renci.SshNet;
-using Renci.SshNet.Common;
 
 namespace ClemSSH.Client;
 
@@ -7,53 +7,106 @@ public static class InteractiveShell
 {
     public static void Run(SshClient client)
     {
-        using var shell = client.CreateShellStream(
-            "xterm", 80, 24, 800, 600, 65536);
-
-        Console.InputEncoding = System.Text.Encoding.UTF8;
-        Console.OutputEncoding = System.Text.Encoding.UTF8;
-
-        var cancellation = new CancellationTokenSource();
-        Console.CancelKeyPress += (s, e) =>
+        uint columns = 80, rows = 24;
+        if (!Console.IsOutputRedirected)
         {
-            // forward ctrl+c to remote shell
-            e.Cancel = true;
-        };
+            columns = (uint)Math.Max(1, Console.WindowWidth);
+            rows = (uint)Math.Max(1, Console.WindowHeight);
+        }
 
-        // pipe remote shell output to console
-        var reader = Task.Run(() =>
+        using var shell = client.CreateShellStream("xterm", columns, rows, 0, 0, 65536);
+        using var cancellation = new CancellationTokenSource();
+        bool previousTreatControlC = Console.TreatControlCAsInput;
+        if (!Console.IsInputRedirected)
+            Console.TreatControlCAsInput = true;
+
+        Task? reader = null;
+        try
         {
-            try
+            reader = Task.Run(() =>
             {
-                while (shell.CanRead && !cancellation.IsCancellationRequested)
+                try
                 {
-                    string? chunk = shell.Read();
-                    if (chunk == null) break;
-                    Console.Write(chunk);
+                    var output = Console.OpenStandardOutput();
+                    var buffer = new byte[4096];
+                    int count;
+                    while ((count = shell.Read(buffer, 0, buffer.Length)) > 0)
+                    {
+                        output.Write(buffer, 0, count);
+                        output.Flush();
+                    }
                 }
-            }
-            catch (Exception) { /* stream closed */ }
-        }, cancellation.Token);
+                catch (IOException) { }
+                catch (ObjectDisposedException) { }
+                finally { cancellation.Cancel(); }
+            });
 
-        // pipe keyboard inputs to remote shell
-        var stdin = Console.OpenStandardInput();
-        var writer = Task.Run(() =>
-        {
-            var buf = new byte[4096];
-            try
+            if (Console.IsInputRedirected)
+            {
+                var writer = Task.Run(() =>
+                {
+                    try
+                    {
+                        var input = Console.OpenStandardInput();
+                        var buffer = new byte[4096];
+                        int count;
+                        while ((count = input.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            shell.Write(buffer, 0, count);
+                            shell.Flush();
+                        }
+                    }
+                    catch (IOException) { }
+                    catch (ObjectDisposedException) { }
+                });
+                Task.WaitAny(reader, writer);
+            }
+            else
             {
                 while (!cancellation.IsCancellationRequested)
                 {
-                    int read = stdin.Read(buf, 0, buf.Length);
-                    if (read <= 0) break;
-                    shell.Write(buf, 0, read);
+                    if (!Console.KeyAvailable)
+                    {
+                        cancellation.Token.WaitHandle.WaitOne(20);
+                        continue;
+                    }
+                    byte[] bytes = EncodeKey(Console.ReadKey(intercept: true));
+                    if (bytes.Length == 0) continue;
+                    shell.Write(bytes, 0, bytes.Length);
                     shell.Flush();
                 }
             }
-            catch (Exception) { /* stream closed */ }
-        }, cancellation.Token);
+        }
+        finally
+        {
+            shell.Dispose();
+            reader?.GetAwaiter().GetResult();
+            if (!Console.IsInputRedirected)
+                Console.TreatControlCAsInput = previousTreatControlC;
+        }
+    }
 
-        Task.WaitAny(reader, writer);
-        cancellation.Cancel();
+    public static byte[] EncodeKey(ConsoleKeyInfo key)
+    {
+        string? sequence = key.Key switch
+        {
+            ConsoleKey.UpArrow => "\x1b[A",
+            ConsoleKey.DownArrow => "\x1b[B",
+            ConsoleKey.RightArrow => "\x1b[C",
+            ConsoleKey.LeftArrow => "\x1b[D",
+            ConsoleKey.Home => "\x1b[H",
+            ConsoleKey.End => "\x1b[F",
+            ConsoleKey.Insert => "\x1b[2~",
+            ConsoleKey.Delete => "\x1b[3~",
+            ConsoleKey.PageUp => "\x1b[5~",
+            ConsoleKey.PageDown => "\x1b[6~",
+            ConsoleKey.Backspace => "\x7f",
+            ConsoleKey.Enter => "\r",
+            _ => null
+        };
+        if (sequence != null) return Encoding.UTF8.GetBytes(sequence);
+        if (key.KeyChar != '\0')
+            return Encoding.UTF8.GetBytes(new[] { key.KeyChar });
+        return [];
     }
 }

@@ -116,12 +116,7 @@ if (matches.Count == 0)
         Console.WriteLine($"No user, defaulting to current user");
         user = Environment.UserName;
     }
-    string password = "";
-    while (password == "")
-    {
-        password = UI.Password("Password: ");
-    }
-    SSHClient.Open(host, port, user, password, savePassword: true);
+    SSHClient.Open(host, port, user, null, savePassword: true);
     return;
 }
 
@@ -142,8 +137,8 @@ if (!Store.Instance.LoadEncrypted(matches[0], out string? pass))
     return;
 }
 
-string[] parts = [.. CommandRegex().Match(matches[0]).Groups.Values.Select(g => g.Value)];
-SSHClient.Open(matches[0], int.Parse(parts[2]), parts[1], pass!, savePassword: false);
+var saved = CommandRegex().Match(matches[0]);
+SSHClient.Open(saved.Groups["host"].Value, int.Parse(saved.Groups["port"].Value), saved.Groups["user"].Value, pass!, savePassword: false);
 return;
 
 partial class Program
@@ -193,12 +188,12 @@ partial class Program
             return;
         }
         // 0 - Connect
-        string[] parts = [..CommandRegex().Match(selectedKey).Groups.Values.Select(g => g.Value)];
+        var saved = CommandRegex().Match(selectedKey);
         if (!Store.Instance.LoadEncrypted(selectedKey, out string? pass))
         {
             Crasher.Crash($"Password for {selectedKey} not found in store.");
             return;
         }
-        SSHClient.Open(parts[0], int.Parse(parts[2]), parts[1], pass!, savePassword: false);
+        SSHClient.Open(saved.Groups["host"].Value, int.Parse(saved.Groups["port"].Value), saved.Groups["user"].Value, pass!, savePassword: false);
     }
 }
