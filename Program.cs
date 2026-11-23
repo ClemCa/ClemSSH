@@ -77,6 +77,9 @@ if ((args[0] is "--help" or "-h") || !ConnectToHost(args[0]))
 
 partial class Program
 {
+    private const string AliasNameHint = "Alias names use 1–64 ASCII letters, digits, hyphens or underscores, starting with a letter or digit.";
+    private const string InvalidDestination = "Invalid address. Enter [user@]host[:port] with a port from 1 to 65535.";
+
     private static int RunAliasCommand(string[] arguments)
     {
         try
@@ -95,9 +98,14 @@ partial class Program
                     }
                     return 0;
                 case ["set", var name, var destination]:
-                    if (!AliasStore.IsValidName(name) || !SshDestination.TryParse(destination, out _))
+                    if (!AliasStore.IsValidName(name))
                     {
-                        Console.Error.WriteLine("Use an alias name of 1–64 ASCII letters, digits, hyphens or underscores, starting with a letter or digit, and a destination in [user@]host[:port] form.");
+                        Console.Error.WriteLine(AliasNameHint);
+                        break;
+                    }
+                    if (!SshDestination.TryParse(destination, out _))
+                    {
+                        Console.Error.WriteLine(InvalidDestination);
                         break;
                     }
                     AliasStore.Default.Set(name, destination);
@@ -133,14 +141,14 @@ partial class Program
                     string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ", clearOnEmpty: true).Trim();
                     if (destination.Length > 0 && !ConnectToHost(destination))
                     {
-                        Console.WriteLine("Invalid address. Enter [user@]host[:port] with a port from 1 to 65535.");
+                        Console.WriteLine(InvalidDestination);
                     }
                     break;
                 case 1:
                     ListSavedHosts();
                     break;
                 case 2:
-                    BrowseAliases();
+                    ManageAliases();
                     break;
                 default:
                     return;
@@ -148,26 +156,88 @@ partial class Program
         }
     }
 
-    private static void BrowseAliases()
+    private static void ManageAliases()
     {
-        try
+        while (true)
         {
-            var aliases = AliasStore.Default.List();
-            if (aliases.Count == 0)
+            try
             {
-                Console.WriteLine("No aliases. Create one with: clemssh --alias set <name> [user@]host[:port]");
+                var aliases = AliasStore.Default.List();
+                string[] options = ["Add alias", ..aliases.Select(alias => $"{alias.Key} -> {alias.Value}"), "Back"];
+                int selected = UI.Select("Aliases", options);
+                if (selected == -1 || selected == options.Length - 1)
+                {
+                    return;
+                }
+                if (selected == 0)
+                {
+                    string name = UI.Input("Alias name (blank to cancel): ", clearOnEmpty: true).Trim();
+                    if (name.Length > 0)
+                    {
+                        SaveAliasFromMenu(name, isNew: true);
+                    }
+                    continue;
+                }
+
+                var (alias, destination) = aliases[selected - 1];
+                switch (UI.Select($"{alias} -> {destination}", ["Connect", "Edit destination", "Remove alias", "Back"]))
+                {
+                    case 0:
+                        ConnectToDestination(destination);
+                        return;
+                    case 1:
+                        SaveAliasFromMenu(alias, isNew: false);
+                        break;
+                    case 2:
+                        if (UI.Select($"Remove alias '{alias}'?", ["No", "Yes"]) == 1)
+                        {
+                            Console.WriteLine(AliasStore.Default.Remove(alias)
+                                ? $"Removed alias {alias}."
+                                : $"No alias named {alias}.");
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.Error.WriteLine($"Could not manage aliases: {ex.Message}");
                 return;
             }
-            int selected = UI.Select("Aliases:", aliases.Select(alias => $"{alias.Key} -> {alias.Value}").ToArray());
-            if (selected != -1)
+        }
+    }
+
+    private static void SaveAliasFromMenu(string name, bool isNew)
+    {
+        if (!AliasStore.IsValidName(name))
+        {
+            Console.Error.WriteLine(AliasNameHint);
+            return;
+        }
+
+        string destination = UI.Input("Destination [user@]host[:port] (blank to cancel): ", clearOnEmpty: true).Trim();
+        if (destination.Length == 0)
+        {
+            return;
+        }
+        if (!SshDestination.TryParse(destination, out _))
+        {
+            Console.Error.WriteLine(InvalidDestination);
+            return;
+        }
+
+        if (isNew)
+        {
+            if (!AliasStore.Default.TryAdd(name, destination))
             {
-                ConnectToDestination(aliases[selected].Value);
+                Console.Error.WriteLine($"Alias '{name}' already exists. Select it from the list to edit it.");
+                return;
             }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        else
         {
-            Console.Error.WriteLine($"Could not list aliases: {ex.Message}");
+            AliasStore.Default.Set(name, destination);
         }
+        Console.WriteLine($"Alias {name} -> {destination}");
     }
 
     private static void ListSavedHosts()

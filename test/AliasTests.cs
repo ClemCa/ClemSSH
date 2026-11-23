@@ -45,6 +45,15 @@ public class AliasTests : IDisposable
         Assert.Equal("prod:22", store.Resolve("prod:22"));
     }
 
+    [Fact]
+    public void AddingAnAliasDoesNotOverwriteAnExistingAlias()
+    {
+        var store = new AliasStore(directory);
+        Assert.True(store.TryAdd("Prod", "first.example.com"));
+        Assert.False(new AliasStore(directory).TryAdd("PROD", "second.example.com"));
+        Assert.Equal("first.example.com", store.Resolve("prod"));
+    }
+
     [Theory]
     [InlineData("../prod")]
     [InlineData("--help")]

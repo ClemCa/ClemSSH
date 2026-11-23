@@ -69,7 +69,11 @@ public sealed partial class AliasStore(string directory)
         }
     }
 
-    public void Set(string name, string destination)
+    public void Set(string name, string destination) => Save(name, destination, overwrite: true);
+
+    public bool TryAdd(string name, string destination) => Save(name, destination, overwrite: false);
+
+    private bool Save(string name, string destination, bool overwrite)
     {
         string path = GetPath(name);
         if (!SshDestination.TryParse(destination, out _))
@@ -81,7 +85,12 @@ public sealed partial class AliasStore(string directory)
         try
         {
             File.WriteAllText(temporary, destination + Environment.NewLine);
-            File.Move(temporary, path, overwrite: true);
+            File.Move(temporary, path, overwrite);
+            return true;
+        }
+        catch (IOException) when (!overwrite && File.Exists(path))
+        {
+            return false;
         }
         finally
         {
