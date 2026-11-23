@@ -35,23 +35,9 @@ public class Store
 
     private void Initialize(string? directory)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            string appData = directory ?? Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            filePath = Path.Combine(appData, "clemssh", "store.json");
-            keyFilePath = ""; // not used on Windows
-        }
-        else
-        {
-            string? configHome = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
-            if (string.IsNullOrEmpty(configHome))
-            {
-                configHome = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config");
-            }
-            filePath = Path.Combine(configHome, "clemssh", "store.json");
-            keyFilePath = Path.Combine(configHome, "clemssh", "secret.key");
-        }
+        string configDirectory = ConfigDirectory.GetPath(directory);
+        filePath = Path.Combine(configDirectory, "store.json");
+        keyFilePath = OperatingSystem.IsWindows() ? "" : Path.Combine(configDirectory, "secret.key");
         try
         {
             string? dir = Path.GetDirectoryName(filePath);

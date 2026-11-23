@@ -5,21 +5,23 @@ public static class KeySearcher
 {
     public static bool Search(string host, string? user, int port, out List<string> matches)
     {
-        List<string> options = new List<string>();
-        foreach (string key in Store.Instance.Keys)
-        {
-            string[] parts = key.Split(':');
-            if (parts.Length != 3) continue;
-            string kHost = parts[0];
-            string kUser = parts[1];
-            int kPort = int.Parse(parts[2]);
+        matches = FindMatches(new SshDestination(host, user, port), Store.Instance.Keys);
+        return matches.Count > 0;
+    }
 
-            if (kHost == host && (user == null || kUser == user) && (port == -1 || kPort == port))
+    public static List<string> FindMatches(SshDestination destination, IEnumerable<string> keys)
+    {
+        List<string> options = new List<string>();
+        foreach (string key in keys)
+        {
+            if (SshDestination.TryParse(key, out var saved) && saved.User is not null && saved.Port != -1 &&
+                string.Equals(saved.Host, destination.Host, StringComparison.OrdinalIgnoreCase) &&
+                (destination.User is null || saved.User == destination.User) &&
+                (destination.Port == -1 || saved.Port == destination.Port))
             {
                 options.Add(key);
             }
         }
-        matches = options;
-        return options.Count > 0;
+        return options;
     }
 }

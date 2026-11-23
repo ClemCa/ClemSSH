@@ -1,5 +1,8 @@
 ﻿/* ClemSSH - Easy-Auth SSH Client
 *
+* Open the interactive menu:
+* clemssh
+*
 * Any level of detail work on memorized hosts:
 * clemssh [<user>@]<host>[:<port>]
 *
@@ -9,67 +12,52 @@
 * clemssh (--delete | -d) [<user>@]<host>[:<port>]
 */
 
-using System.Text.RegularExpressions;
 using ClemSSH.Client;
 using ClemSSH.Lib;
 
+if (args.Length == 0)
+{
+    if (Console.IsInputRedirected || Console.IsOutputRedirected)
+    {
+        PrintHelp();
+    }
+    else
+    {
+        RunHomeMenu();
+    }
+    return;
+}
+
+if (args[0] == "--alias")
+{
+    Environment.ExitCode = RunAliasCommand(args[1..]);
+    return;
+}
+
 if (args.Length != 1)
 {
-    if (args.Length == 2 && (args[0] == "--delete" || args[0] == "-d"))
+    if (args.Length == 2 && (args[0] is "--delete" or "-d" or "--search" or "-s") &&
+        SshDestination.TryParse(args[1], out var query))
     {
-        string fusedDelete = args[1];
-        Regex regexDelete = CommandRegex();
-        var matchDelete = regexDelete.Match(fusedDelete);
-        if (!matchDelete.Success)
-        {
-            PrintHelp();
-            return;
-        }
-        string hostD = matchDelete.Groups["host"].Value;
-        string? userD = matchDelete.Groups["user"].Success ? matchDelete.Groups["user"].Value : null;
-        int portD = matchDelete.Groups["port"].Success ? int.Parse(matchDelete.Groups["port"].Value) : -1;
-
-        KeySearcher.Search(hostD, userD, portD, out List<string> matchesD);
-        if (matchesD.Count == 0)
+        var matches = KeySearcher.FindMatches(query, Store.Instance.Keys);
+        if (matches.Count == 0)
         {
             Console.WriteLine("No matches found.");
             return;
         }
-        if (matchesD.Count > 1)
+        if (args[0] is "--search" or "-s")
         {
-            int selected = UI.Select("Multiple matches found. Select one to delete:", matchesD);
-            if (selected == -1)
-            {
-                Console.WriteLine("Aborted.");
-                return;
-            }
-            matchesD[0] = matchesD[selected];
-        }
-        Store.Instance.DeleteEncrypted(matchesD[0]);
-        Console.WriteLine($"Deleted {matchesD[0]}.");
-        return;
-    }
-    if (args.Length == 2 && (args[0] == "--search" || args[0] == "-s"))
-    {
-        string fusedSearch = args[1];
-        Regex regexSearch = CommandRegex();
-        var matchSearch = regexSearch.Match(fusedSearch);
-        if (!matchSearch.Success)
-        {
-            PrintHelp();
+            NavigateMatches("Matches:", matches);
             return;
         }
-        string hostS = matchSearch.Groups["host"].Value;
-        string? userS = matchSearch.Groups["user"].Success ? matchSearch.Groups["user"].Value : null;
-        int portS = matchSearch.Groups["port"].Success ? int.Parse(matchSearch.Groups["port"].Value) : -1;
-
-        KeySearcher.Search(hostS, userS, portS, out List<string> matchesS);
-        if (matchesS.Count == 0)
+        int selected = matches.Count == 1 ? 0 : UI.Select("Multiple matches found. Select one to delete:", matches);
+        if (selected == -1)
         {
-            Console.WriteLine("No matches found.");
+            Console.WriteLine("Aborted.");
             return;
         }
-        NavigateMatches("Matches:", matchesS);
+        Store.Instance.DeleteEncrypted(matches[selected]);
+        Console.WriteLine($"Deleted {matches[selected]}.");
         return;
     }
     PrintHelp();
@@ -78,122 +66,232 @@ if (args.Length != 1)
 
 if (args[0] == "--list" || args[0] == "-l")
 {
-    var keys = Store.Instance.Keys;
-    if (keys.Count == 0)
-    {
-        Console.WriteLine("No saved hosts.");
-        return;
-    }
-    NavigateMatches("All saved hosts:", [..keys]);
+    ListSavedHosts();
     return;
 }
 
-string fused = args.Length > 1 ? string.Join(" ", args[1..]) : "";
-Regex regex = CommandRegex();
-
-var match = regex.Match(args[0]);
-if (!match.Success)
+if ((args[0] is "--help" or "-h") || !ConnectToHost(args[0]))
 {
     PrintHelp();
-    return;
 }
-
-string host = match.Groups["host"].Value;
-string? user = match.Groups["user"].Success ? match.Groups["user"].Value : null;
-int port = match.Groups["port"].Success ? int.Parse(match.Groups["port"].Value) : -1;
-
-KeySearcher.Search(host, user, port, out List<string> matches);
-
-if (matches.Count == 0)
-{
-    if (port == -1)
-    {
-        Console.WriteLine($"No port, defaulting to 22");
-        port = 22;
-    }
-    if (user == null)
-    {
-        Console.WriteLine($"No user, defaulting to current user");
-        user = Environment.UserName;
-    }
-    SSHClient.Open(host, port, user, null, savePassword: true);
-    return;
-}
-
-if (matches.Count > 1)
-{
-    int selected = UI.Select("Multiple matches found. Select one:", matches);
-    if (selected == -1)
-    {
-        Console.WriteLine("Aborted.");
-        return;
-    }
-    matches[0] = matches[selected];
-}
-
-if (!Store.Instance.LoadEncrypted(matches[0], out string? pass))
-{
-    Crasher.Crash($"Password for {matches[0]} not found in store.");
-    return;
-}
-
-var saved = CommandRegex().Match(matches[0]);
-SSHClient.Open(saved.Groups["host"].Value, int.Parse(saved.Groups["port"].Value), saved.Groups["user"].Value, pass!, savePassword: false);
-return;
 
 partial class Program
 {
-    [GeneratedRegex(@"^(?:(?<user>[^@]+)@)?(?<host>[^:]+)(?::(?<port>\d+))?$")]
-    private static partial Regex CommandRegex();
+    private static int RunAliasCommand(string[] arguments)
+    {
+        try
+        {
+            switch (arguments)
+            {
+                case [] or ["list"]:
+                    var aliases = AliasStore.Default.List();
+                    if (aliases.Count == 0)
+                    {
+                        Console.WriteLine("No aliases.");
+                    }
+                    foreach (var (name, destination) in aliases)
+                    {
+                        Console.WriteLine($"{name} -> {destination}");
+                    }
+                    return 0;
+                case ["set", var name, var destination]:
+                    if (!AliasStore.IsValidName(name) || !SshDestination.TryParse(destination, out _))
+                    {
+                        Console.Error.WriteLine("Use an alias name of 1–64 ASCII letters, digits, hyphens or underscores, starting with a letter or digit, and a destination in [user@]host[:port] form.");
+                        break;
+                    }
+                    AliasStore.Default.Set(name, destination);
+                    Console.WriteLine($"Alias {name} -> {destination}");
+                    return 0;
+                case ["remove", var name] when AliasStore.IsValidName(name):
+                    if (AliasStore.Default.Remove(name))
+                    {
+                        Console.WriteLine($"Removed alias {name}.");
+                        return 0;
+                    }
+                    Console.Error.WriteLine($"No alias named {name}.");
+                    break;
+                default:
+                    PrintHelp();
+                    break;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not manage aliases: {ex.Message}");
+        }
+        return 1;
+    }
+
+    private static void RunHomeMenu()
+    {
+        while (true)
+        {
+            UI.WriteTitle("ClemSSH");
+            switch (UI.Select("Use ↑/↓ and Enter to select, or Esc to exit.", ["Connect to a host", "Saved hosts", "Aliases", "Exit"]))
+            {
+                case 0:
+                    string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ").Trim();
+                    if (destination.Length > 0 && !ConnectToHost(destination))
+                    {
+                        Console.WriteLine("Invalid address. Enter [user@]host[:port] with a port from 1 to 65535.");
+                    }
+                    break;
+                case 1:
+                    ListSavedHosts();
+                    break;
+                case 2:
+                    BrowseAliases();
+                    break;
+                default:
+                    return;
+            }
+            Console.WriteLine();
+        }
+    }
+
+    private static void BrowseAliases()
+    {
+        try
+        {
+            var aliases = AliasStore.Default.List();
+            if (aliases.Count == 0)
+            {
+                Console.WriteLine("No aliases. Create one with: clemssh --alias set <name> [user@]host[:port]");
+                return;
+            }
+            int selected = UI.Select("Aliases:", aliases.Select(alias => $"{alias.Key} -> {alias.Value}").ToArray());
+            if (selected != -1)
+            {
+                ConnectToDestination(aliases[selected].Value);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not list aliases: {ex.Message}");
+        }
+    }
+
+    private static void ListSavedHosts()
+    {
+        var keys = Store.Instance.Keys;
+        if (keys.Count == 0)
+        {
+            Console.WriteLine("No saved hosts.");
+            return;
+        }
+        NavigateMatches("All saved hosts:", [..keys]);
+    }
+
+    private static bool ConnectToHost(string destination)
+    {
+        try
+        {
+            destination = AliasStore.Default.Resolve(destination);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not resolve alias: {ex.Message}");
+            return true;
+        }
+        return ConnectToDestination(destination);
+    }
+
+    private static bool ConnectToDestination(string destination)
+    {
+        if (!SshDestination.TryParse(destination, out var target))
+        {
+            return false;
+        }
+
+        var (host, user, port) = target;
+        var matches = KeySearcher.FindMatches(target, Store.Instance.Keys);
+
+        if (matches.Count == 0)
+        {
+            if (port == -1)
+            {
+                Console.WriteLine("No port, defaulting to 22");
+                port = 22;
+            }
+            if (user == null)
+            {
+                Console.WriteLine("No user, defaulting to current user");
+                user = Environment.UserName;
+            }
+            SSHClient.Open(host, port, user, null, savePassword: true);
+            return true;
+        }
+
+        int selected = matches.Count == 1 ? 0 : UI.Select("Multiple matches found. Select one:", matches);
+        if (selected == -1)
+        {
+            Console.WriteLine("Aborted.");
+        }
+        else
+        {
+            ConnectToSavedHost(matches[selected]);
+        }
+        return true;
+    }
+
     private static void PrintHelp()
     {
         Console.WriteLine("Usage:");
-        Console.WriteLine("  clemssh [<user>@]<host>[:<port>] - Connect to a host");
+        Console.WriteLine("  clemssh - Open the interactive menu");
+        Console.WriteLine("  clemssh <alias> | [<user>@]<host>[:<port>] - Connect to a host");
+        Console.WriteLine("  clemssh --alias [list] - List aliases");
+        Console.WriteLine("  clemssh --alias set <name> [<user>@]<host>[:<port>] - Create or update an alias");
+        Console.WriteLine("  clemssh --alias remove <name> - Remove an alias");
         Console.WriteLine("  clemssh (--list | -l) - List & manage saved hosts");
         Console.WriteLine("  clemssh (--search | -s) [<user>@]<host>[:<port>] - List & manage saved hosts by search");
         Console.WriteLine("  clemssh (--delete | -d) [<user>@]<host>[:<port>] - Delete a saved host");
     }
-    private static void NavigateMatches(string title, List<string> matches, string preSelected = "")
+    private static void NavigateMatches(string title, List<string> matches)
     {
-        string selectedKey;
-        if (preSelected == "")
+        while (matches.Count > 0)
         {
             int selected = UI.Select(title, matches);
             if (selected == -1)
             {
                 return;
             }
-            selectedKey = matches[selected];
-        } else
-        {
-            selectedKey = preSelected;
-        }
-        int selection = UI.Select(selectedKey, new List<string> { "Connect", "Delete", "Cancel" }, defaultIndex: 0);
-        if (selection == -1 || selection == 2)
-        {
-            NavigateMatches(title, matches);
-            return;
-        }
-        if (selection == 1)
-        {
-            int confirm = UI.Select($"Are you sure you want to delete {selectedKey}?", new List<string> { "Yes", "No" }, defaultIndex: 1);
-            if (confirm != 0)
+            string selectedKey = matches[selected];
+            while (true)
             {
-                NavigateMatches(title, matches, preSelected: selectedKey);
-                return;
+                int action = UI.Select(selectedKey, ["Connect", "Delete", "Back"]);
+                if (action == 0)
+                {
+                    ConnectToSavedHost(selectedKey);
+                    return;
+                }
+                if (action != 1)
+                {
+                    break;
+                }
+                if (UI.Select($"Are you sure you want to delete {selectedKey}?", ["Yes", "No"], defaultIndex: 1) == 0)
+                {
+                    Store.Instance.DeleteEncrypted(selectedKey);
+                    Console.WriteLine($"Deleted {selectedKey}");
+                    matches.RemoveAt(selected);
+                    break;
+                }
             }
-            Store.Instance.DeleteEncrypted(selectedKey);
-            Console.WriteLine($"Deleted {selectedKey}");
-            NavigateMatches(title, [..matches.Where(m => m != selectedKey)]);
+        }
+    }
+
+    private static void ConnectToSavedHost(string selectedKey)
+    {
+        if (!SshDestination.TryParse(selectedKey, out var saved) || saved.User is null || saved.Port == -1)
+        {
+            Console.Error.WriteLine($"Invalid saved destination: {selectedKey}");
             return;
         }
-        // 0 - Connect
-        var saved = CommandRegex().Match(selectedKey);
         if (!Store.Instance.LoadEncrypted(selectedKey, out string? pass))
         {
             Crasher.Crash($"Password for {selectedKey} not found in store.");
             return;
         }
-        SSHClient.Open(saved.Groups["host"].Value, int.Parse(saved.Groups["port"].Value), saved.Groups["user"].Value, pass!, savePassword: false);
+        SSHClient.Open(saved.Host, saved.Port, saved.User, pass!, savePassword: false);
     }
 }

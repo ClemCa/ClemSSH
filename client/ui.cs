@@ -25,14 +25,19 @@ public static class UI
         }
 
         int current = Math.Clamp(defaultIndex, 0, options.Count - 1);
-        int top = Console.CursorTop + 1;
-
         Console.WriteLine(prompt);
+        // Reserve rows by writing them so the terminal can scroll at the bottom.
+        int visibleCount = Math.Min(options.Count, Math.Max(1, Console.WindowHeight - 2));
+        for (int i = 0; i < visibleCount; i++)
+        {
+            Console.WriteLine();
+        }
+        int bottom = Console.CursorTop;
         Console.CursorVisible = false;
 
         try
         {
-            RenderOptions(options, current, top);
+            RenderOptions(options, current, bottom, visibleCount);
             while (true)
             {
                 var key = Console.ReadKey(intercept: true);
@@ -40,11 +45,11 @@ public static class UI
                 {
                     case ConsoleKey.UpArrow:
                         current = (current - 1 + options.Count) % options.Count;
-                        RenderOptions(options, current, top);
+                        RenderOptions(options, current, bottom, visibleCount);
                         break;
                     case ConsoleKey.DownArrow:
                         current = (current + 1) % options.Count;
-                        RenderOptions(options, current, top);
+                        RenderOptions(options, current, bottom, visibleCount);
                         break;
                     case ConsoleKey.Enter:
                         return current;
@@ -70,16 +75,17 @@ public static class UI
         }
     }
 
-    private static void RenderOptions(IReadOnlyList<string> options, int current, int top)
+    private static void RenderOptions(IReadOnlyList<string> options, int current, int bottom, int visibleCount)
     {
         lock (ConsoleLock)
         {
-            int cursorTop = Console.CursorTop;
-            for (int i = 0; i < options.Count; i++)
+            int first = Math.Min(current / visibleCount * visibleCount, options.Count - visibleCount);
+            int width = Math.Max(0, Console.WindowWidth - 1);
+            for (int row = 0; row < visibleCount; row++)
             {
-                Console.SetCursorPosition(0, top + i);
+                int i = first + row;
+                Console.SetCursorPosition(0, bottom - visibleCount + row);
                 bool selected = i == current;
-                var prev = Console.BackgroundColor;
 
                 if (selected)
                 {
@@ -91,10 +97,11 @@ public static class UI
                     Console.ResetColor();
                 }
 
-                Console.Write($"  {(selected ? "> " : "  ")}{i + 1}. {options[i]}".PadRight(Console.WindowWidth - 1));
+                string line = $"  {(selected ? "> " : "  ")}{i + 1}. {options[i]}";
+                Console.Write(line.Length > width ? line[..width] : line.PadRight(width));
                 Console.ResetColor();
             }
-            Console.SetCursorPosition(0, top + options.Count);
+            Console.SetCursorPosition(0, bottom);
         }
     }
 
