@@ -138,11 +138,7 @@ partial class Program
             switch (UI.Select("ClemSSH — ↑/↓ and Enter to select, Esc to exit", ["Connect to a host", "Saved hosts", "Aliases", "Exit"]))
             {
                 case 0:
-                    string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ", clearOnEmpty: true).Trim();
-                    if (destination.Length > 0 && !ConnectToHost(destination))
-                    {
-                        Console.WriteLine(InvalidDestination);
-                    }
+                    PickConnection();
                     break;
                 case 1:
                     ListSavedHosts();
@@ -155,6 +151,76 @@ partial class Program
             }
         }
     }
+
+    private static string[] SavedDestinations() => Store.Instance.Keys
+        .Where(key => SshDestination.TryParse(key, out var target) && target.User is not null && target.Port != -1)
+        .Order(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    private static void PickConnection()
+    {
+        IReadOnlyList<KeyValuePair<string, string>> aliases;
+        try
+        {
+            aliases = AliasStore.Default.List();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Console.Error.WriteLine($"Could not list aliases: {ex.Message}");
+            aliases = [];
+        }
+
+        var savedHosts = SavedDestinations();
+        if (aliases.Count > 0 || savedHosts.Length > 0)
+        {
+            string[] options = [..aliases.Select(alias => $"{alias.Key} -> {alias.Value}"), ..savedHosts, "Enter address manually", "Back"];
+            int selected = UI.Select("Connect to a host", options);
+            if (selected == -1 || selected == options.Length - 1)
+            {
+                return;
+            }
+            if (selected < aliases.Count)
+            {
+                ConnectToDestination(aliases[selected].Value);
+                return;
+            }
+            int savedIndex = selected - aliases.Count;
+            if (savedIndex < savedHosts.Length)
+            {
+                ConnectToSavedHost(savedHosts[savedIndex]);
+                return;
+            }
+        }
+
+        string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ", transient: true).Trim();
+        if (destination.Length > 0 && !ConnectToHost(destination))
+        {
+            Console.WriteLine(InvalidDestination);
+        }
+    }
+
+    private static string PickAliasDestination(string name)
+    {
+        var savedHosts = SavedDestinations();
+        if (savedHosts.Length > 0)
+        {
+            string[] options = [..savedHosts, "Enter address manually", "Cancel"];
+            int selected = UI.Select("Choose a saved host", options, description: $"Destination for alias '{name}'");
+            if (selected == -1 || selected == options.Length - 1)
+            {
+                return "";
+            }
+            if (selected < savedHosts.Length)
+            {
+                return savedHosts[selected];
+            }
+        }
+
+        return ReadAliasDestination();
+    }
+
+    private static string ReadAliasDestination() =>
+        UI.Input("Destination [user@]host[:port] (blank to cancel): ", transient: true).Trim();
 
     private static void ManageAliases()
     {
@@ -171,7 +237,7 @@ partial class Program
                 }
                 if (selected == 0)
                 {
-                    string name = UI.Input("Alias name (blank to cancel): ", clearOnEmpty: true).Trim();
+                    string name = UI.Input("Alias name (blank to cancel): ", transient: true).Trim();
                     if (name.Length > 0)
                     {
                         SaveAliasFromMenu(name, isNew: true);
@@ -214,7 +280,7 @@ partial class Program
             return;
         }
 
-        string destination = UI.Input("Destination [user@]host[:port] (blank to cancel): ", clearOnEmpty: true).Trim();
+        string destination = isNew ? PickAliasDestination(name) : ReadAliasDestination();
         if (destination.Length == 0)
         {
             return;

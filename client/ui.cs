@@ -6,7 +6,7 @@ public static class UI
 {
     private static readonly object ConsoleLock = new();
 
-    public static int Select(string prompt, IReadOnlyList<string> options, int defaultIndex = 0)
+    public static int Select(string prompt, IReadOnlyList<string> options, int defaultIndex = 0, string? description = null)
     {
         if (options.Count == 0)
         {
@@ -19,8 +19,13 @@ public static class UI
             Console.WriteLine();
         }
         // Reserve rows by writing them so the terminal can scroll at the bottom.
-        int visibleCount = Math.Min(options.Count, Math.Max(1, Console.WindowHeight - 2));
-        int rowCount = visibleCount + 1;
+        if (Console.WindowHeight < 4)
+        {
+            description = null;
+        }
+        int headerRows = description is null ? 1 : 2;
+        int visibleCount = Math.Min(options.Count, Math.Max(1, Console.WindowHeight - headerRows - 1));
+        int rowCount = visibleCount + headerRows;
         for (int i = 0; i < rowCount; i++)
         {
             Console.WriteLine();
@@ -31,7 +36,12 @@ public static class UI
         try
         {
             WriteMenuRow(top, prompt);
-            RenderOptions(options, current, top, visibleCount);
+            if (description is not null)
+            {
+                WriteMenuRow(top + 1, description);
+            }
+            int optionsTop = top + headerRows;
+            RenderOptions(options, current, optionsTop, visibleCount);
             while (true)
             {
                 var key = Console.ReadKey(intercept: true);
@@ -39,11 +49,11 @@ public static class UI
                 {
                     case ConsoleKey.UpArrow:
                         current = (current - 1 + options.Count) % options.Count;
-                        RenderOptions(options, current, top, visibleCount);
+                        RenderOptions(options, current, optionsTop, visibleCount);
                         break;
                     case ConsoleKey.DownArrow:
                         current = (current + 1) % options.Count;
-                        RenderOptions(options, current, top, visibleCount);
+                        RenderOptions(options, current, optionsTop, visibleCount);
                         break;
                     case ConsoleKey.Enter:
                         return current;
@@ -112,18 +122,24 @@ public static class UI
                     Console.ResetColor();
                 }
 
-                WriteMenuRow(top + row + 1, $"  {(selected ? "> " : "  ")}{i + 1}. {options[i]}");
+                WriteMenuRow(top + row, $"  {(selected ? "> " : "  ")}{i + 1}. {options[i]}");
                 Console.ResetColor();
             }
         }
     }
 
-    public static string Input(string prompt, bool clearOnEmpty = false)
+    public static string Input(string prompt, bool transient = false)
     {
         lock (ConsoleLock)
         {
-            if (clearOnEmpty)
+            int start = 0;
+            if (transient)
             {
+                if (Console.CursorLeft != 0)
+                {
+                    Console.WriteLine();
+                }
+                start = Console.CursorTop;
                 int width = Math.Max(0, Console.WindowWidth - 1);
                 Console.Write(prompt.Length > width ? prompt[..width] : prompt);
             }
@@ -132,11 +148,23 @@ public static class UI
                 Console.Write(prompt);
             }
             string? input = Console.ReadLine();
-            if (clearOnEmpty && string.IsNullOrEmpty(input))
+            if (transient)
             {
-                int row = Math.Max(0, Console.CursorTop - (input is null ? 0 : 1));
-                WriteMenuRow(row, "");
-                Console.SetCursorPosition(0, row);
+                int end = Console.CursorTop;
+                // Enter may scroll the buffer when the prompt is on its last row.
+                if (input is not null && end == Console.BufferHeight - 1)
+                {
+                    int width = Math.Max(1, Console.WindowWidth);
+                    int cells = Math.Min(prompt.Length, width - 1) + input.Length;
+                    int rows = Math.Max(1, (cells + width - 1) / width);
+                    start = Math.Min(start, end - rows);
+                }
+                start = Math.Max(0, Math.Min(start, end));
+                for (int row = start; row <= end; row++)
+                {
+                    WriteMenuRow(row, "");
+                }
+                Console.SetCursorPosition(0, start);
             }
             return input ?? string.Empty;
         }
