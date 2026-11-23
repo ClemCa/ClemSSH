@@ -127,11 +127,10 @@ partial class Program
     {
         while (true)
         {
-            UI.WriteTitle("ClemSSH");
-            switch (UI.Select("Use ↑/↓ and Enter to select, or Esc to exit.", ["Connect to a host", "Saved hosts", "Aliases", "Exit"]))
+            switch (UI.Select("ClemSSH — ↑/↓ and Enter to select, Esc to exit", ["Connect to a host", "Saved hosts", "Aliases", "Exit"]))
             {
                 case 0:
-                    string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ").Trim();
+                    string destination = UI.Input("Alias or [user@]host[:port] (blank to go back): ", clearOnEmpty: true).Trim();
                     if (destination.Length > 0 && !ConnectToHost(destination))
                     {
                         Console.WriteLine("Invalid address. Enter [user@]host[:port] with a port from 1 to 65535.");
@@ -146,7 +145,6 @@ partial class Program
                 default:
                     return;
             }
-            Console.WriteLine();
         }
     }
 
